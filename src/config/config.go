@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	USDT_Contract = common.HexToAddress("0xe78984541A634C52C760fbF97ca3f8E7d8f04C85")
-	WHPB_Contract = common.HexToAddress("0xBE05Ac1FB417c9EA435b37a9Cecd39Bc70359d31")
+	WHPB_USDT_PAIR = common.HexToAddress("0x0c85fe2dbc540386d2c1d907764956e18ea2ff6b")
+	//USDT_Contract = common.HexToAddress("0xe78984541A634C52C760fbF97ca3f8E7d8f04C85")
+	//WHPB_Contract = common.HexToAddress("0xBE05Ac1FB417c9EA435b37a9Cecd39Bc70359d31")
 )
 
 // Config  module config
