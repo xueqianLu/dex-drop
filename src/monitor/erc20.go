@@ -13,6 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"math/big"
 	"strings"
+	"time"
 )
 
 // LogTransfer ..
@@ -60,7 +61,7 @@ func SwapParse(url string, begin, end int64) {
 				pairAddr,
 			},
 		}
-
+		fmt.Printf("goto filter logs from(%s) to(%s)\n", fromBlock.Text(10), toBlock.Text(10))
 		logs, err := client.FilterLogs(context.Background(), query)
 		if err != nil {
 			log.Fatal(err)
@@ -100,5 +101,7 @@ func SwapParse(url string, begin, end int64) {
 
 			fmt.Printf("\n\n")
 		}
+		begin = toBlock.Int64() + 1
+		time.Sleep(time.Second)
 	}
 }
