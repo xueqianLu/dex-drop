@@ -3,40 +3,34 @@ package monitor
 import (
 	"context"
 	"fmt"
-	"github.com/ethereum/go-ethereum"
-	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/hpdex-project/dex-drop/src/config"
 	"github.com/hpdex-project/dex-drop/src/contracts/factory"
 	log "github.com/sirupsen/logrus"
 	"math/big"
-	"strings"
 	"time"
 )
 
-// LogTransfer ..
-type LogTransfer struct {
-	From   common.Address
-	To     common.Address
-	Tokens *big.Int
-}
+var (
+	zeroBig           = big.NewInt(0)
+	UserAmounts       = make(map[common.Address]*big.Int)
+	OverThresholdUser = make(map[common.Address]uint64)
+	decmical          = big.NewInt(0).Exp(big.NewInt(10), big.NewInt(18), nil)
+	threshold         = big.NewInt(0).Mul(big.NewInt(100), decmical)
+)
 
-// LogApproval ..
-type LogApproval struct {
-	TokenOwner common.Address
-	Spender    common.Address
-	Tokens     *big.Int
-}
-
-type LogSwap struct {
-	Sender     common.Address
-	Amount0In  *big.Int
-	Amount1In  *big.Int
-	Amount0Out *big.Int
-	Amount1Out *big.Int
-	To         common.Address
+func userAdd(addr common.Address, amount *big.Int) *big.Int {
+	var uamount *big.Int
+	var exist bool
+	if uamount, exist = UserAmounts[addr]; !exist {
+		uamount = big.NewInt(0).Add(big.NewInt(0), amount)
+	} else {
+		uamount = big.NewInt(0).Add(uamount, amount)
+	}
+	UserAmounts[addr] = uamount
+	return uamount
 }
 
 func SwapParse(url string, begin, end int64) {
@@ -45,63 +39,65 @@ func SwapParse(url string, begin, end int64) {
 		log.Fatal(err)
 	}
 
-	// 0x Protocol (ZRX) token address
 	pairAddr := config.WHPB_USDT_PAIR
+	//usdtAddr := config.USDT_Contract
+	//hpbAddr  := config.WHPB_Contract
+
 	page := int64(5000)
+	swapFilter, err := factory.NewIUniswapV2PairFilterer(pairAddr, client)
+	if err != nil {
+		log.Fatal("NewIUniswapV2PairFilterer failed, err:", err)
+	}
 	for begin < end {
-		var fromBlock = big.NewInt(begin)
-		var toBlock = big.NewInt(end)
+		var fromBlock = uint64(begin)
+		var endBlock = uint64(end)
 		if (end - begin) > page {
-			toBlock = big.NewInt(begin + page)
+			endBlock = uint64(begin + page)
 		}
-		query := ethereum.FilterQuery{
-			FromBlock: fromBlock,
-			ToBlock:   toBlock,
-			Addresses: []common.Address{
-				pairAddr,
-			},
+		fmt.Printf("goto filter logs from(%d) to(%d)\n", fromBlock, endBlock)
+		p := &bind.FilterOpts{
+			Start:   uint64(begin),
+			End:     &endBlock,
+			Context: context.Background(),
 		}
-		fmt.Printf("goto filter logs from(%s) to(%s)\n", fromBlock.Text(10), toBlock.Text(10))
-		logs, err := client.FilterLogs(context.Background(), query)
+
+		swapiter, err := swapFilter.FilterSwap(p, []common.Address{}, []common.Address{})
 		if err != nil {
-			log.Fatal(err)
+			fmt.Printf("filter swap failed, err :", err)
+			return
 		}
-
-		contractAbi, err := abi.JSON(strings.NewReader(string(factory.IUniswapV2PairABI)))
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		logSwapSig := []byte("Swap(address,uint256,uint256,uint256,uint256,address)")
-		logSwapSigHash := crypto.Keccak256Hash(logSwapSig)
-
-		for _, vLog := range logs {
-			fmt.Printf("Log Block Number: %d\n", vLog.BlockNumber)
-			fmt.Printf("Log Index: %d\n", vLog.Index)
-
-			switch vLog.Topics[0].Hex() {
-			case logSwapSigHash.Hex():
-				fmt.Printf("Log Name: Transfer\n")
-
-				events, err := contractAbi.Unpack("Swap", vLog.Data)
-				if err != nil {
-					log.Fatal(err)
-				}
-				for _, event := range events {
-					if swapEvent, ok := event.(LogSwap); ok {
-						fmt.Printf("sender: %s\n", swapEvent.Sender.Hex())
-						fmt.Printf("amount0In: %s\n", swapEvent.Amount0In.Text(10))
-						fmt.Printf("amount1In: %s\n", swapEvent.Amount1In.Text(10))
-						fmt.Printf("amount0Out: %s\n", swapEvent.Amount0Out.Text(10))
-						fmt.Printf("amount1Out: %s\n", swapEvent.Amount1Out.Text(10))
-						fmt.Printf("to: %s\n", swapEvent.To.Hex())
-					}
-				}
+		for swapiter.Next() {
+			event := swapiter.Event
+			//fmt.Printf("evnet :%v\n", event)
+			//{
+			//	fmt.Printf("sender: %s\n", event.Sender.Hex())
+			//	fmt.Printf("amount0In: %s\n", event.Amount0In.Text(10))
+			//	fmt.Printf("amount1In: %s\n", event.Amount1In.Text(10))
+			//	fmt.Printf("amount0Out: %s\n", event.Amount0Out.Text(10))
+			//	fmt.Printf("amount1Out: %s\n", event.Amount1Out.Text(10))
+			//	fmt.Printf("to: %s\n", event.To.Hex())
+			//}
+			var nowAmount *big.Int
+			var user common.Address
+			var amount *big.Int
+			if event.Amount1In.Cmp(zeroBig) > 0 {
+				user = event.Sender
+				amount = event.Amount1In
+			} else if event.Amount1Out.Cmp(zeroBig) > 0 {
+				user = event.To
+				amount = event.Amount1Out
 			}
-
-			fmt.Printf("\n\n")
+			nowAmount = userAdd(user, amount)
+			if nowAmount.Cmp(threshold) >= 0 {
+				if _, exist := OverThresholdUser[user]; !exist {
+					OverThresholdUser[user] = event.Raw.BlockNumber
+					fmt.Printf("user %s transfer amount over %s at block %d\n", user.String(), threshold, event.Raw.BlockNumber)
+				}
+			} else {
+				fmt.Printf("user %s transfer amount %s total at block %d\n", user.String(), nowAmount.Text(10), event.Raw.BlockNumber)
+			}
 		}
-		begin = toBlock.Int64() + 1
+		begin = int64(endBlock + 1)
 		time.Sleep(time.Second)
 	}
 }
