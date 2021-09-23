@@ -138,7 +138,3 @@ func (c *CMCTokenTypeDecoder) Decode(value string) error {
 
 	return nil
 }
-
-func (c *Config) GetInfuraAddress() string {
-	return fmt.Sprintf("https://mainnet.infura.io/v3/%s", c.InfuraAPIKey)
-}
